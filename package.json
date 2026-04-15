@@ -1,0 +1,21 @@
+{
+  "name": "applynote",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "googleapis": "^171.4.0",
+    "imap-simple": "^5.1.0",
+    "mailparser": "^3.9.8"
+  },
+  "devDependencies": {
+    "@shelex/cypress-allure-plugin": "^2.41.2",
+    "allure-commandline": "^2.38.1"
+  }
+}
