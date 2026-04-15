@@ -6,55 +6,36 @@ const Imap = require("imap-simple");
 
 module.exports = defineConfig({
   e2e: {
-    // ─── Viewport & timeouts ───────────────────────────────────────────────
+    screenshotOnRunFailure: true, 
     viewportWidth: 1440,
     viewportHeight: 900,
+    projectId: "qqtmqa",
+    experimentalPromptCommand: true,
+    chromeWebSecurity: false,
     defaultCommandTimeout: 30000,
     requestTimeout: 30000,
     responseTimeout: 30000,
     pageLoadTimeout: 30000,
-    taskTimeout: 120000,
-
-    // ─── Run behaviour ─────────────────────────────────────────────────────
-    screenshotOnRunFailure: true,
-    testIsolation: false,
-    chromeWebSecurity: false,
+    taskTimeout: 120000,        
     retries: { runMode: 1, openMode: 0 },
-
-    // ─── Paths ─────────────────────────────────────────────────────────────
-    specPattern: "cypress/e2e/**/*.{cy.js,cy.ts}",
     downloadsFolder: path.join(__dirname, "cypress", "downloads"),
-
-    // ─── Cloud ─────────────────────────────────────────────────────────────
-    projectId: "qqtmqa",
-
-    // ─── Allure env vars ───────────────────────────────────────────────────
-    env: {
-      allure: true,
-      allureResultsPath: "allure-results",
-      allureSkipCommands: "wrap",
-      allureAddVideoOnPass: false,
-      allureSkipAutomaticScreenshots: false,
-      allureLogCypress: false,
-      allureReuseAfterSpec: false,
-      allureAddVideoOnFail: true,
-    },
+    testIsolation: false,
+    specPattern: "cypress/e2e/**/*.{cy.js,cy.ts}",
 
     setupNodeEvents(on, config) {
-      // ── Allure plugin (MUST be registered first) ─────────────────────────
-      const allureWriter = require("@shelex/cypress-allure-plugin/writer");
-      allureWriter(on, config);
 
-      // ── Env injection ────────────────────────────────────────────────────
-      config.env.EMAIL    = process.env.CYPRESS_EMAIL;
-      config.env.PASSWORD = process.env.CYPRESS_PASSWORD;
+
+
+      config.env.EMAIL = process.env.EMAIL;
+      config.env.PASSWORD = process.env.PASSWORD;
+      config.env.TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
+      config.env.TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
+      config.env.TWILIO_NUMBER = process.env.TWILIO_NUMBER;
+      config.env.EXPECTED_FROM = process.env.EXPECTED_FROM;
       config.env.PROJECT_NAME = "LVL 10-11";
-      config.env.PROJECT_ID   = 500526306;
+      config.env.PROJECT_ID = 500526306;
 
-      // ── Tasks ────────────────────────────────────────────────────────────
       on("task", {
-
-        // Returns the newest downloaded .csv/.xlsx whose name contains prefix
         getLatestDownloadedFile({ downloadsFolder, prefix = "" }) {
           const files = fs
             .readdirSync(downloadsFolder)
@@ -69,7 +50,6 @@ module.exports = defineConfig({
             }))
             .sort((a, b) => b.time - a.time);
 
-          // Clean up older duplicates
           files.slice(1).forEach((file) =>
             fs.unlinkSync(path.join(downloadsFolder, file.name))
           );
@@ -77,7 +57,12 @@ module.exports = defineConfig({
           return files[0]?.name || null;
         },
 
-        // Delete files matching a pattern + extension
+        parseExcel({ filePath }) {
+          const workbook = xlsx.readFile(filePath);
+          const sheet = workbook.Sheets[workbook.SheetNames[0]];
+          return xlsx.utils.sheet_to_json(sheet, { header: 1 });
+        },
+
         deleteDownloadedFiles({ downloadsFolder, pattern, extension }) {
           if (!fs.existsSync(downloadsFolder)) return 0;
 
@@ -92,21 +77,19 @@ module.exports = defineConfig({
           return filesToDelete.length;
         },
 
-        // Delete a single file by absolute path
         deleteFile({ filePath }) {
           if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
           return null;
         },
 
-        // Fetch the most recent email from the last 30 min
         async getMostRecentEmail() {
           const imapConfig = {
             imap: {
-              user:     process.env.GMAIL_USER,
+              user: process.env.GMAIL_USER,
               password: process.env.GMAIL_APP_PASSWORD,
-              host:     "imap.gmail.com",
-              port:     993,
-              tls:      true,
+              host: "imap.gmail.com",
+              port: 993,
+              tls: true,
               tlsOptions: { rejectUnauthorized: false },
             },
           };
@@ -116,42 +99,45 @@ module.exports = defineConfig({
             await connection.openBox("INBOX");
 
             const searchCriteria = [["SINCE", new Date(Date.now() - 30 * 60 * 1000)]];
-            const fetchOptions   = { bodies: ["HEADER", "TEXT", ""], markSeen: false };
+            const fetchOptions = { bodies: ["HEADER", "TEXT", ""], markSeen: false };
 
             const messages = await connection.search(searchCriteria, fetchOptions);
             connection.end();
 
-            if (!messages?.length) return null;
+            if (messages && messages.length > 0) {
+              const message = messages[messages.length - 1];
+              const parts = message.parts;
+              let body = "";
+              let headers = {};
 
-            const message = messages[messages.length - 1];
-            let body = "", headers = {};
+              parts.forEach((part) => {
+                if (part.which === "TEXT" || part.which === "") body += part.body;
+                if (part.which === "HEADER") headers = part.body;
+              });
 
-            message.parts.forEach((part) => {
-              if (part.which === "TEXT" || part.which === "") body += part.body;
-              if (part.which === "HEADER") headers = part.body;
-            });
+              return {
+                subject: headers.subject ? headers.subject[0] : "",
+                from: headers.from ? headers.from[0] : "",
+                body: body,
+                date: headers.date ? headers.date[0] : "",
+              };
+            }
 
-            return {
-              subject: headers.subject?.[0] ?? "",
-              from:    headers.from?.[0]    ?? "",
-              body,
-              date:    headers.date?.[0]    ?? "",
-            };
+            return null;
           } catch (error) {
-            console.error("❌ getMostRecentEmail:", error.message);
+            console.error("❌ Error getting most recent email:", error.message);
             return null;
           }
         },
 
-        // List subjects/senders of emails from the last 30 min
         async listRecentEmails() {
           const imapConfig = {
             imap: {
-              user:     process.env.GMAIL_USER,
+              user: process.env.GMAIL_USER,
               password: process.env.GMAIL_APP_PASSWORD,
-              host:     "imap.gmail.com",
-              port:     993,
-              tls:      true,
+              host: "imap.gmail.com",
+              port: 993,
+              tls: true,
               tlsOptions: { rejectUnauthorized: false },
             },
           };
@@ -161,7 +147,7 @@ module.exports = defineConfig({
             await connection.openBox("INBOX");
 
             const searchCriteria = [["SINCE", new Date(Date.now() - 30 * 60 * 1000)]];
-            const fetchOptions   = { bodies: ["HEADER"], markSeen: false };
+            const fetchOptions = { bodies: ["HEADER"], markSeen: false };
 
             const messages = await connection.search(searchCriteria, fetchOptions);
             connection.end();
@@ -169,19 +155,66 @@ module.exports = defineConfig({
             return messages.map((msg) => {
               const headers = msg.parts.find((p) => p.which === "HEADER").body;
               return {
-                subject: headers.subject?.[0] ?? "No Subject",
-                from:    headers.from?.[0]    ?? "Unknown",
-                date:    headers.date?.[0]    ?? "Unknown",
+                subject: headers.subject ? headers.subject[0] : "No Subject",
+                from: headers.from ? headers.from[0] : "Unknown",
+                date: headers.date ? headers.date[0] : "Unknown",
               };
             });
           } catch (error) {
-            console.error("❌ listRecentEmails:", error.message);
+            console.error("❌ Error listing emails:", error.message);
             return [];
           }
+        },
+
+        getTwilioOtp({ accountSid, authToken, to }) {
+          // ✅ Guard — prevents config crash when credentials missing in CI
+          if (!accountSid || !authToken) {
+            console.error("❌ Twilio credentials missing for getTwilioOtp");
+            return null;
+          }
+
+          const client = twilio(accountSid, authToken);
+          return client.messages
+            .list({ to, limit: 5 })
+            .then((messages) => {
+              const otpMessage = messages.find((msg) => msg.body.includes("Your OTP"));
+              if (otpMessage) return otpMessage.body.match(/\d{4,6}/)[0];
+              return null;
+            });
+        },
+
+        getTwilioMessages({ accountSid, authToken, to }) {
+          if (!accountSid || !authToken) {
+            console.error("❌ Twilio credentials missing for getTwilioMessages");
+            return [];
+          }
+
+          const client = twilio(accountSid, authToken);
+          return client.messages
+            .list({ to, limit: 10 })
+            .then((messages) =>
+              messages.map((m) => ({
+                body: m.body,
+                from: m.from,
+                to: m.to,
+                direction: m.direction,
+                status: m.status,
+              }))
+            );
         },
       });
 
       return config;
+    },
+    env: {
+      allure: true,
+      allureResultsPath: "allure-results",
+      allureSkipCommands: "wrap",
+      allureAddVideoOnPass: false,
+      allureSkipAutomaticScreenshots: false,
+      allureLogCypress: false,
+      allureReuseAfterSpec: false,
+      allureAddVideoOnFail: true,
     },
   },
 });
