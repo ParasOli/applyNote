@@ -30,6 +30,8 @@ jobs:
 
       - run: npm ci
 
+      - run: npx cypress install
+
       - run: npx cypress verify
 
       - run: |
