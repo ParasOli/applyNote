@@ -1,9 +1,7 @@
 require("dotenv").config();
 const fs = require("fs");
 const path = require("path");
-const xlsx = require("xlsx");
 const Imap = require("imap-simple");
-const twilio = require("twilio");
 
 module.exports = {
   e2e: {
